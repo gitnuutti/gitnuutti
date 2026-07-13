@@ -64,7 +64,19 @@ try {
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "git not found on PATH." }
 if (-not (Get-Command gh  -ErrorAction SilentlyContinue)) { throw "GitHub CLI (gh) not found on PATH." }
 gh auth status *> $null
-if ($LASTEXITCODE -ne 0) { throw "gh is not authenticated. Run: gh auth login" }
+if ($LASTEXITCODE -ne 0) {
+    # Not logged into gh - fall back to the token Git Credential Manager already
+    # holds for github.com (the one GitHub Desktop / git push uses). gh reads it
+    # from GH_TOKEN without gh's own login-time scope check; 'repo' scope is enough.
+    Write-Step "gh not logged in - reusing the github.com token from Git Credential Manager..."
+    $ghToken = ("protocol=https`nhost=github.com`n`n" | git credential fill 2>$null |
+                Select-String '^password=' | ForEach-Object { $_.Line.Substring(9) } |
+                Select-Object -First 1)
+    if (-not $ghToken) { throw "No github.com credential in Git Credential Manager. Run: gh auth login" }
+    $env:GH_TOKEN = $ghToken
+    gh auth status *> $null
+    if ($LASTEXITCODE -ne 0) { throw "gh still not authenticated with the GCM token. Run: gh auth login" }
+}
 
 # ---- locate the repo this script sits in (portable to any subfolder) -------
 $repoRoot = (git -C $PSScriptRoot rev-parse --show-toplevel 2>$null)
